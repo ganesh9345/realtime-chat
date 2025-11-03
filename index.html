@@ -1,0 +1,263 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>X1 Chatrooms</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    /* Simple styling - change as needed */
+    body { font-family: Poppins, sans-serif; background: linear-gradient(120deg,#0f172a,#0ea5e9); color: #fff; min-height:100vh; margin:0; display:flex; align-items:center; justify-content:center;}
+    .card { background: rgba(255,255,255,0.05); padding:20px; border-radius:12px; width: 420px; box-shadow:0 8px 30px rgba(0,0,0,0.4); }
+    input, button, select { width:100%; padding:10px; margin:8px 0; border-radius:8px; border: none; }
+    .small { width:48%; display:inline-block; }
+    #chatArea { display:none; width:820px; max-width:95%; }
+    .chat-layout { display:flex; gap:20px; }
+    .left { width:320px; background:rgba(0,0,0,0.2); padding:10px; border-radius:10px; }
+    .right { flex:1; background:rgba(255,255,255,0.05); padding:10px; border-radius:10px; display:flex; flex-direction:column; }
+    .messages { flex:1; overflow:auto; padding:10px; border-radius:6px; background:rgba(0,0,0,0.15); margin-bottom:10px; }
+    .msg { margin-bottom:8px; }
+    .system { color:#f3f4f6; opacity:0.9; font-size:0.9em; }
+    .own { color:#0b1220; background:#a7f3d0; padding:6px; border-radius:6px; display:inline-block; }
+    .other { color:#fff; background:#1f2937; padding:6px; border-radius:6px; display:inline-block; }
+    .toolbar { display:flex; gap:8px; }
+    .btn { cursor:pointer; background:linear-gradient(90deg,#06b6d4,#60a5fa); color:#000; font-weight:700; }
+    .danger { background: linear-gradient(90deg,#fb7185,#f97316); }
+    .hidden { display:none; }
+  </style>
+</head>
+<body>
+
+<div id="authArea" class="card">
+  <h2 style="margin:0 0 8px 0">X1 Chatrooms</h2>
+  <div id="authForms">
+    <input id="email" placeholder="Email (you@gmail.com)" />
+    <input id="password" placeholder="Password" type="password" />
+    <div style="display:flex; gap:8px;">
+      <button id="btnRegister" class="btn">Register</button>
+      <button id="btnLogin" class="btn">Login</button>
+    </div>
+
+    <hr style="border:none; height:1px; background:rgba(255,255,255,0.1); margin:12px 0;" />
+
+    <p style="font-size:0.95em; opacity:0.9">Or use quick guest name:</p>
+    <input id="guestName" placeholder="Guest display name (optional)" />
+    <div style="display:flex; gap:8px;">
+      <button id="btnGuest" class="btn">Continue as Guest</button>
+    </div>
+    <p style="font-size:0.85em; opacity:0.85; margin-top:8px">After login, you can create a room or join with a Room ID. The room creator receives an email transcript (if Gmail configured on server).</p>
+  </div>
+</div>
+
+<div id="chatArea" class="card">
+  <div class="chat-layout">
+    <div class="left">
+      <h3 style="margin-top:0">Rooms</h3>
+      <input id="roomIdInput" placeholder="Enter Room ID to Join" />
+      <button id="btnJoin" class="btn">Join Room</button>
+      <hr style="border:none; height:1px; background:rgba(255,255,255,0.08); margin:10px 0;" />
+      <input id="createRoomEmail" placeholder="(Optional) Creator email override" />
+      <button id="btnCreate" class="btn">Create New Room</button>
+      <div style="margin-top:10px;">
+        <p style="font-size:0.95em">Joined room: <span id="joinedRoom">-</span></p>
+        <button id="btnSendTranscript" class="btn">Send Transcript to Creator</button>
+      </div>
+    </div>
+
+    <div class="right">
+      <div style="display:flex; align-items:center; justify-content:space-between;">
+        <div>
+          <strong id="displayNameLabel">You: Guest</strong><br />
+          <small id="userEmailLabel" style="opacity:0.85"></small>
+        </div>
+        <div>
+          <button id="btnLogout" class="btn danger">Logout</button>
+        </div>
+      </div>
+
+      <div class="messages" id="messages"></div>
+
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <input id="messageInput" placeholder="Type message..." />
+        <button id="btnSend" class="btn">Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  // Basic client logic
+  let token = localStorage.getItem('x1_token') || null;
+  let userEmail = null;
+  let displayName = 'Guest';
+  let joinedRoom = null;
+
+  const socket = io({
+    auth: {
+      token: token
+    }
+  });
+
+  // UI refs
+  const authArea = document.getElementById('authArea');
+  const chatArea = document.getElementById('chatArea');
+  const messagesDiv = document.getElementById('messages');
+  const joinedRoomSpan = document.getElementById('joinedRoom');
+
+  // helpers
+  function showChat() {
+    authArea.style.display = 'none';
+    chatArea.style.display = 'block';
+    document.getElementById('displayNameLabel').innerText = 'You: ' + displayName;
+    document.getElementById('userEmailLabel').innerText = userEmail || '';
+  }
+  function showAuth() {
+    authArea.style.display = 'block';
+    chatArea.style.display = 'none';
+  }
+
+  // Auth actions
+  document.getElementById('btnRegister').onclick = async () => {
+    const email = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
+    if (!email || !password) return alert('Email & password required');
+    const res = await fetch('/api/register', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({email,password})});
+    const j = await res.json();
+    if (res.ok) {
+      token = j.token; userEmail = j.email; localStorage.setItem('x1_token', token);
+      displayName = userEmail.split('@')[0];
+      showChat();
+    } else {
+      alert(j.error || 'Register failed');
+    }
+  };
+
+  document.getElementById('btnLogin').onclick = async () => {
+    const email = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
+    if (!email || !password) return alert('Email & password required');
+    const res = await fetch('/api/login', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({email,password})});
+    const j = await res.json();
+    if (res.ok) {
+      token = j.token; userEmail = j.email; localStorage.setItem('x1_token', token);
+      displayName = userEmail.split('@')[0];
+      showChat();
+      // reconnect socket auth
+      socket.auth = { token };
+      socket.disconnect(); socket.connect();
+    } else {
+      alert(j.error || 'Login failed');
+    }
+  };
+
+  document.getElementById('btnGuest').onclick = () => {
+    const name = document.getElementById('guestName').value.trim();
+    displayName = name || ('Guest' + Math.floor(Math.random()*900+100));
+    userEmail = null;
+    localStorage.removeItem('x1_token');
+    showChat();
+  };
+
+  document.getElementById('btnLogout').onclick = () => {
+    token = null; userEmail = null; localStorage.removeItem('x1_token');
+    displayName = 'Guest';
+    socket.disconnect();
+    socket.connect();
+    showAuth();
+  };
+
+  // Room create/join
+  document.getElementById('btnCreate').onclick = async () => {
+    const emailOverride = document.getElementById('createRoomEmail').value.trim();
+    const headers = { 'content-type':'application/json' };
+    if (token) headers['authorization'] = 'Bearer ' + token;
+    const body = {};
+    if (emailOverride) body.creatorEmail = emailOverride;
+    const res = await fetch('/api/rooms', { method:'POST', headers, body: JSON.stringify(body) });
+    const j = await res.json();
+    if (res.ok) {
+      alert('Room created: ' + j.roomId + '. A mail will be sent to the creator (if server configured).');
+      joinRoom(j.roomId);
+    } else {
+      alert('Create room failed: ' + (j.error||'unknown'));
+    }
+  };
+
+  document.getElementById('btnJoin').onclick = () => {
+    const id = document.getElementById('roomIdInput').value.trim().toUpperCase();
+    if (!id) return alert('Enter Room ID');
+    joinRoom(id);
+  };
+
+  async function joinRoom(id) {
+    // join via socket
+    socket.emit('join-room', { roomId: id, displayName }, (ack) => {
+      if (ack && ack.error) return alert('Join error: ' + ack.error);
+      joinedRoom = id;
+      joinedRoomSpan.innerText = id;
+    });
+  }
+
+  // messages
+  document.getElementById('btnSend').onclick = sendMessage;
+  document.getElementById('messageInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') sendMessage();
+  });
+
+  function sendMessage() {
+    const text = document.getElementById('messageInput').value.trim();
+    if (!text || !joinedRoom) return;
+    socket.emit('chat-message', { text });
+    document.getElementById('messageInput').value = '';
+  }
+
+  // socket handlers
+  socket.on('connect', () => console.log('socket connected'));
+  socket.on('disconnect', () => console.log('socket disconnected'));
+
+  socket.on('room-history', (msgs) => {
+    messagesDiv.innerHTML = '';
+    msgs.forEach(m => addMessage(m));
+  });
+
+  socket.on('chat-message', (m) => addMessage(m));
+  socket.on('system-message', (m) => {
+    const d = document.createElement('div'); d.className='msg system'; d.innerText = m.text;
+    messagesDiv.appendChild(d); messagesDiv.scrollTop = messagesDiv.scrollHeight;
+  });
+
+  function addMessage(m) {
+    const d = document.createElement('div'); d.className='msg';
+    const me = (m.from === displayName || m.from === (userEmail || '').split('@')[0]);
+    d.innerHTML = `<div class="${me ? 'own' : 'other'}"><strong>${m.from}</strong>: ${m.text} <div style="font-size:0.8em;opacity:0.8;">${m.time}</div></div>`;
+    messagesDiv.appendChild(d);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+  }
+
+  // send transcript button
+  document.getElementById('btnSendTranscript').onclick = async () => {
+    if (!joinedRoom) return alert('Join a room first');
+    const headers = {};
+    const tokenLocal = localStorage.getItem('x1_token');
+    if (tokenLocal) headers['authorization'] = 'Bearer ' + tokenLocal;
+    const res = await fetch(`/api/rooms/${joinedRoom}/send-transcript`, { method:'POST', headers });
+    const j = await res.json();
+    if (res.ok) alert('Transcript sent to room creator (if configured).');
+    else alert('Send transcript failed: ' + (j.error || 'unknown'));
+  };
+
+  // if token present, show chat
+  if (localStorage.getItem('x1_token')) {
+    // try to extract email from token payload (not verifying here)
+    try {
+      const payload = JSON.parse(atob(localStorage.getItem('x1_token').split('.')[1]));
+      userEmail = payload.email;
+      displayName = userEmail.split('@')[0];
+    } catch(e) {}
+    showChat();
+    socket.auth = { token: localStorage.getItem('x1_token') };
+    socket.disconnect(); socket.connect();
+  }
+</script>
+</body>
+</html>
